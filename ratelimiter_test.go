@@ -73,11 +73,11 @@ func TestRateLimiter(t *testing.T) {
 		{
 			name: "random count tasks with max=100",
 			opt: options{
-				countOfTasks:     rand.Intn(100) + 1,
-				tasksInDuaration: uint(rand.Intn(100)) + 1,
-				tasksInDuration:  time.Millisecond * time.Duration(rand.Intn(100)+10),
-				maxParallel:      uint(rand.Intn(100)) + 1,
-				taskDuration:     time.Millisecond * time.Duration(rand.Intn(100)+10),
+				countOfTasks:     rand.Intn(10000) + 1,
+				tasksInDuaration: uint(rand.Intn(10000)) + 1,
+				tasksInDuration:  time.Millisecond * time.Duration(rand.Intn(10)+10),
+				maxParallel:      uint(rand.Intn(1000)) + 1,
+				taskDuration:     time.Millisecond * time.Duration(rand.Intn(10)+10),
 			},
 		},
 	}
@@ -91,9 +91,11 @@ func TestRateLimiter(t *testing.T) {
 			Duration:           opt.tasksInDuration,
 		}
 
+		rl.strategy = rl.workerStrategy
+
 		done := make(chan struct{})
 		go func() {
-			rl.start()
+			rl.run()
 			done <- struct{}{}
 		}()
 
@@ -200,4 +202,60 @@ type dbInstance struct {
 func (db *dbInstance) write(string) error {
 	atomic.AddInt64(&db.counter, 1)
 	return nil
+}
+
+func BenchmarkWorkerStrategy(b *testing.B) {
+	tasks := make(chan func(), 1)
+	rl := rateLimiter{
+		Tasks:              tasks,
+		MaxParallel:        10_000,
+		MaxTasksInDuration: 1000,
+		Duration:           time.Millisecond,
+	}
+
+	rl.strategy = rl.workerStrategy
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		rl.run()
+		wg.Done()
+	}()
+
+	for n := 0; n < b.N; n++ {
+		tasks <- func() { time.Sleep(time.Millisecond) }
+	}
+
+	close(tasks)
+
+	wg.Wait()
+}
+
+func BenchmarkChannelStrategy(b *testing.B) {
+	tasks := make(chan func(), 1)
+	rl := rateLimiter{
+		Tasks:              tasks,
+		MaxParallel:        10_000,
+		MaxTasksInDuration: 1000,
+		Duration:           time.Millisecond,
+	}
+
+	rl.strategy = rl.channelStrategy
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		rl.run()
+		wg.Done()
+	}()
+
+	for n := 0; n < b.N; n++ {
+		tasks <- func() { time.Sleep(time.Millisecond) }
+	}
+
+	close(tasks)
+
+	wg.Wait()
 }

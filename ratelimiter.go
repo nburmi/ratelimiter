@@ -30,7 +30,9 @@ func Start(tasks <-chan func(), maxParallel, tasksInMinute uint) {
 		Duration:           time.Minute,
 	}
 
-	rl.start()
+	rl.strategy = rl.channelStrategy
+
+	rl.run()
 }
 
 type rateLimiter struct {
@@ -38,11 +40,13 @@ type rateLimiter struct {
 	MaxParallel        uint
 	MaxTasksInDuration uint
 	Duration           time.Duration
+
+	strategy func()
 }
 
-// Start listen channel Tasks and call function Do.
+// run listen channel Tasks and call function.
 // exit when channel Tasks is closed.
-func (rl *rateLimiter) start() {
+func (rl *rateLimiter) run() {
 	if rl.MaxParallel <= 0 {
 		rl.MaxParallel = DefaultMaxParallel
 	}
@@ -55,11 +59,14 @@ func (rl *rateLimiter) start() {
 		rl.Duration = DefaultDuration
 	}
 
-	// if we will have many engines.
-	rl.channelEngine()
+	if rl.strategy == nil {
+		rl.strategy = rl.workerStrategy
+	}
+
+	rl.strategy()
 }
 
-func (rl *rateLimiter) channelEngine() {
+func (rl *rateLimiter) channelStrategy() {
 	parallel := make(chan struct{}, rl.MaxParallel)
 	for i := 0; i < int(rl.MaxParallel); i++ {
 		parallel <- struct{}{}
@@ -104,6 +111,51 @@ func (rl *rateLimiter) channelEngine() {
 			wg.Done()
 		}(task)
 	}
+
+	wg.Wait()
+}
+
+// run MaxParallel goroutines for task executing.
+// only one goroutine read Tasks chan.
+func (rl *rateLimiter) workerStrategy() {
+	tasks := make(chan func(), 1)
+
+	var wg sync.WaitGroup
+	wg.Add(int(rl.MaxParallel))
+
+	for i := 0; i < int(rl.MaxParallel); i++ {
+		go func() {
+			for task := range tasks {
+				task()
+			}
+			wg.Done()
+		}()
+	}
+
+	period := time.Now().Add(rl.Duration)
+	var counter uint
+
+	for task := range rl.Tasks {
+		now := time.Now()
+		inPeriod := now.Before(period)
+
+		switch {
+		case inPeriod && counter <= rl.MaxTasksInDuration:
+			counter++
+			tasks <- task
+		case !inPeriod:
+			tasks <- task
+			counter = 1
+			period = time.Now().Add(rl.Duration)
+		default:
+			<-time.After(period.Sub(now))
+			tasks <- task
+			counter = 1
+			period = time.Now().Add(rl.Duration)
+		}
+	}
+
+	close(tasks)
 
 	wg.Wait()
 }

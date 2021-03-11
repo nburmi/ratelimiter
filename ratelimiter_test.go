@@ -24,6 +24,8 @@ func TestRateLimiter(t *testing.T) {
 
 		// for mockTasker
 		taskDuration time.Duration
+
+		strategy func(rl *rateLimiter) func()
 	}
 
 	tests := []struct {
@@ -73,11 +75,11 @@ func TestRateLimiter(t *testing.T) {
 		{
 			name: "random count tasks with max=100",
 			opt: options{
-				countOfTasks:     rand.Intn(10000) + 1,
-				tasksInDuaration: uint(rand.Intn(10000)) + 1,
+				countOfTasks:     rand.Intn(1000) + 1,
+				tasksInDuaration: uint(rand.Intn(100)) + 1,
 				tasksInDuration:  time.Millisecond * time.Duration(rand.Intn(10)+10),
-				maxParallel:      uint(rand.Intn(1000)) + 1,
-				taskDuration:     time.Millisecond * time.Duration(rand.Intn(10)+10),
+				maxParallel:      uint(rand.Intn(100)) + 1,
+				taskDuration:     time.Millisecond * time.Duration(rand.Intn(100)+10),
 			},
 		},
 	}
@@ -91,7 +93,7 @@ func TestRateLimiter(t *testing.T) {
 			Duration:           opt.tasksInDuration,
 		}
 
-		rl.strategy = rl.workerStrategy
+		rl.strategy = opt.strategy(&rl)
 
 		done := make(chan struct{})
 		go func() {
@@ -137,9 +139,18 @@ func TestRateLimiter(t *testing.T) {
 		}
 	}
 
+	strategies := []func(rl *rateLimiter) func(){
+		workerStrategy,
+		channelStrategy,
+		lockStrategy,
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			do(t, tt.opt)
+			for _, s := range strategies {
+				tt.opt.strategy = s
+				do(t, tt.opt)
+			}
 		})
 	}
 }
@@ -242,6 +253,34 @@ func BenchmarkChannelStrategy(b *testing.B) {
 	}
 
 	rl.strategy = rl.channelStrategy
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		rl.run()
+		wg.Done()
+	}()
+
+	for n := 0; n < b.N; n++ {
+		tasks <- func() { time.Sleep(time.Millisecond) }
+	}
+
+	close(tasks)
+
+	wg.Wait()
+}
+
+func BenchmarkLockStrategy(b *testing.B) {
+	tasks := make(chan func(), 1)
+	rl := rateLimiter{
+		Tasks:              tasks,
+		MaxParallel:        10_000,
+		MaxTasksInDuration: 1000,
+		Duration:           time.Millisecond,
+	}
+
+	rl.strategy = rl.lockStrategy
 
 	var wg sync.WaitGroup
 

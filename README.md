@@ -45,3 +45,15 @@ close(tasks)
 // wait for termaination
 wg.Wait()
 ```
+
+
+strategy benchmarks
+```golang
+goos: darwin
+goarch: amd64
+pkg: github.com/nburmi/ratelimiter
+cpu: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
+BenchmarkWorkerStrategy-12      11169720              1069 ns/op               0 B/op          0 allocs/op
+BenchmarkChannelStrategy-12     11845108              1012 ns/op              80 B/op          1 allocs/op
+BenchmarkLockStrategy-12        12336549               973.6 ns/op            80 B/op          1 allocs/op
+```

@@ -19,7 +19,14 @@ import (
 const (
 	DefaultMaxParallel   = 1
 	DefaultMaxTasksInMin = 1
-	DefaultDuration      = time.Minute
+
+	defaultDuration = time.Minute
+)
+
+var (
+	lockStrategy    = func(rl *rateLimiter) func() { return rl.lockStrategy }
+	channelStrategy = func(rl *rateLimiter) func() { return rl.channelStrategy }
+	workerStrategy  = func(rl *rateLimiter) func() { return rl.workerStrategy }
 )
 
 func Start(tasks <-chan func(), maxParallel, tasksInMinute uint) {
@@ -56,7 +63,7 @@ func (rl *rateLimiter) run() {
 	}
 
 	if rl.Duration <= 0 {
-		rl.Duration = DefaultDuration
+		rl.Duration = defaultDuration
 	}
 
 	if rl.strategy == nil {
@@ -158,4 +165,65 @@ func (rl *rateLimiter) workerStrategy() {
 	close(tasks)
 
 	wg.Wait()
+}
+
+func (rl *rateLimiter) lockStrategy() {
+	cond := sync.NewCond(&sync.RWMutex{})
+
+	var running int64
+	var inPeriod int64
+
+	done := make(chan struct{}, 1)
+
+	go func() {
+		ticker := time.NewTicker(rl.Duration)
+		for {
+			select {
+			case <-ticker.C:
+				cond.L.Lock()
+				{
+					inPeriod = 0
+					cond.Broadcast()
+				}
+				cond.L.Unlock()
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+
+	for task := range rl.Tasks {
+		cond.L.Lock()
+		{
+			if running > int64(rl.MaxParallel) || inPeriod > int64(rl.MaxTasksInDuration) {
+				cond.Wait()
+			}
+
+			running++
+			inPeriod++
+
+			cond.Broadcast()
+		}
+		cond.L.Unlock()
+
+		wg.Add(1)
+		go func(job func()) {
+			job()
+
+			cond.L.Lock()
+			{
+				running--
+				cond.Broadcast()
+			}
+			cond.L.Unlock()
+
+			wg.Done()
+		}(task)
+	}
+
+	wg.Wait()
+
+	done <- struct{}{}
 }

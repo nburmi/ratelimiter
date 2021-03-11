@@ -23,12 +23,6 @@ const (
 	defaultDuration = time.Minute
 )
 
-var (
-	lockStrategy    = func(rl *rateLimiter) func() { return rl.lockStrategy }
-	channelStrategy = func(rl *rateLimiter) func() { return rl.channelStrategy }
-	workerStrategy  = func(rl *rateLimiter) func() { return rl.workerStrategy }
-)
-
 func Start(tasks <-chan func(), maxParallel, tasksInMinute uint) {
 	rl := rateLimiter{
 		Tasks:              tasks,
@@ -67,7 +61,7 @@ func (rl *rateLimiter) run() {
 	}
 
 	if rl.strategy == nil {
-		rl.strategy = rl.workerStrategy
+		rl.strategy = rl.lockStrategy
 	}
 
 	rl.strategy()

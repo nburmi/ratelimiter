@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+var (
+	lockStrategy    = func(rl *rateLimiter) func() { return rl.lockStrategy }
+	channelStrategy = func(rl *rateLimiter) func() { return rl.channelStrategy }
+	workerStrategy  = func(rl *rateLimiter) func() { return rl.workerStrategy }
+)
+
 /*
 	проверка основана на времени выполнения задач.
 	собираем старт задачи и окончание.
